@@ -1,0 +1,45 @@
+# =====================================================================
+# OWL-Planner configuration file
+# All parameters can be changed without recompiling; most can be
+# overridden from the command line.
+# Usage: ./owl_planner --config owl_planner.yaml
+# =====================================================================
+
+simulation:
+  headless: false          # true = run without GUI (auto-exit, prints metrics)
+  run_seconds: 120.0       # headless simulation duration (s)
+  dt: 0.02                 # simulation step (s), i.e. 50 Hz
+  seed: 42                 # RNG seed: changes obstacle layout & motion
+  debug: false             # print per-replan diagnostics
+
+world:
+  # World bounds (m); user waypoints are clamped to this area
+  bounds:
+    xmin: 0.0
+    xmax: 20.0
+    ymin: 0.0
+    ymax: 15.0
+  obstacles: 30            # number of dynamic obstacles (cylinders)
+  radius:                  # obstacle radius range (m)
+    min: 0.7
+    max: 1.0
+  height:                  # obstacle height range (m)
+    min: 1.0
+    max: 2.5
+  speed:                   # obstacle speed range (m/s)
+    min: 0.4
+    max: 0.6
+  clearance: 1.0           # min spacing between obstacles (m)
+
+robot:
+  start: [-10.0, -10.0]    # robot start position (m)
+  goal: [40.0, 40.0]       # default goal (m); replaceable via mouse waypoints in the GUI
+  speed: 2.0               # cruise speed (m/s)
+  safe_radius: 0.2         # robot safety radius (m)
+  window_len: 14.0         # sliding window length (m)
+  lookahead: 2.5           # pure-pursuit lookahead distance (m)
+  step_spacing: 0.05       # path sampling step (m)
+  plan_expiry_ms: 250.0    # plan expiry threshold (ms); replan when exceeded
+
+pipeline:
+  perception_hz: 30.0      # perception node frequency (Hz)
