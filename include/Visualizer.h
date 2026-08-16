@@ -18,7 +18,7 @@ struct RenderState
     const std::vector<Cylinder>* cylinders = nullptr;
     const std::vector<Eigen::Vector2d>* path = nullptr;
     const std::vector<Eigen::Vector2d>* executed = nullptr;
-    const std::vector<Eigen::Vector2d>* waypoints = nullptr; // user waypoints (current goal + queue)
+    const std::vector<Eigen::Vector2d>* waypoints = nullptr; // queued user waypoints (the current goal is the GOAL marker)
     RobotState robot;
     Eigen::Vector2d goal;
     bool collision = false;
@@ -30,7 +30,8 @@ struct RenderState
 };
 
 // Dynamic visualization: dark theme + gradient path + speed coloring + pulse animation + metrics HUD
-// Interaction: left-click (without dragging) sets a user waypoint inside the sim area
+// Interaction: middle-click (without dragging) sets a user waypoint anywhere inside the
+// pick/work range (by default the rectangle spanned by robot start and goal)
 class Visualizer
 {
 public:
@@ -39,6 +40,10 @@ public:
 
     bool wasStopped() const { return viewer_->wasStopped(); }
     void render(const RenderState& state);
+
+    // Set the rectangle (m) in which user waypoints are allowed.
+    // Defaults to the obstacle world bounds if not called.
+    void setPickRange(double xmin, double xmax, double ymin, double ymax);
 
     // Take picked waypoints (consumed on the main thread; thread-safe)
     std::vector<Eigen::Vector2d> takePickedWaypoints();
@@ -64,6 +69,8 @@ private:
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cylinder_cloud_;
 
     WorldConfig world_cfg_;
+    double pick_xmin_ = 0.0, pick_xmax_ = 20.0;
+    double pick_ymin_ = 0.0, pick_ymax_ = 15.0;
     std::uint32_t frame_ = 0;
 
     // Per-frame shape churn caches: only recreate when the data actually changes.

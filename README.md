@@ -13,8 +13,8 @@ A dynamic path planning demo pipeline: **perception (clustering/simplification) 
   - Planning thread (event-driven): replans only the **sliding window** ahead of the robot, emitting timestamped/sequenced plan frames;
   - Executor (main thread, 50 Hz): pure-pursuit tracking with plan-freshness checks that trigger replanning.
 - **End-to-end latency tracking**: perception/planning/execution share one clock; the HUD shows perception processing time, perception→plan delay, plan time, and end-to-end latency.
-- **User waypoint interaction**: left-click in the GUI to set a goal; consecutive clicks queue waypoints that are executed one by one.
-- **YAML configuration**: obstacle count, speed range, radius/height ranges, world bounds, robot parameters — all configurable without recompiling; CLI flags override the YAML.
+- **User waypoint interaction**: Shift+right-click in the GUI to set a goal anywhere in the work range; up to 3 more waypoints can be pre-placed and are executed one by one.
+- **YAML configuration**: obstacle count, speed range, radius/height ranges, obstacle field (`world.bounds`), waypoint work range (`world.work_range`), robot parameters — all configurable without recompiling; CLI flags override the YAML.
 - **Safety mechanisms**: constant-velocity prediction, early replan triggering, pointwise plan safety validation, geometric emergency bypass, velocity-obstacle dodging, proximity slowdown/hard braking.
 - **Visualization**: dark theme, gradient path, speed-colored obstacles, pulse animation, metrics HUD.
 
@@ -31,7 +31,7 @@ A dynamic path planning demo pipeline: **perception (clustering/simplification) 
                                      ▼
                             ┌────────────────┐
                             │   Visualizer   │  PCL/VTK visualization (HUD / gradient path / pulse)
-                            │  + waypoints    │  LMB click = set waypoint
+                            │  + waypoints    │  Shift+RMB = set goal
                             └────────────────┘
 ```
 
@@ -116,7 +116,8 @@ CLI flags take precedence over the YAML config.
 | `simulation.dt` | `0.02` | simulation step (s), 50 Hz |
 | `simulation.seed` | `42` | RNG seed (changes obstacle layout) |
 | `simulation.debug` | `false` | replan diagnostics output |
-| `world.bounds.xmin/xmax/ymin/ymax` | `0/20/0/15` | world bounds (m) |
+| `world.bounds.xmin/xmax/ymin/ymax` | `0/20/0/15` | obstacle field bounds (m); obstacles stay inside |
+| `world.work_range.xmin/xmax/ymin/ymax` | `-20/60/-20/60` | waypoint/detection range (m); where mouse goals may be placed |
 | `world.obstacles` | `30` | **number of dynamic obstacles (cylinders)** |
 | `world.radius.min/max` | `0.7 / 1.0` | obstacle radius range (m) |
 | `world.height.min/max` | `1.0 / 2.5` | obstacle height range (m) |
@@ -132,11 +133,12 @@ CLI flags take precedence over the YAML config.
 | `robot.plan_expiry_ms` | `250.0` | plan expiry threshold (ms) |
 | `pipeline.perception_hz` | `30.0` | perception node frequency (Hz) |
 
-Example: 60 obstacles, speed 0.2–1.2 m/s, world 30×20 m:
+Example: 60 obstacles, speed 0.2–1.2 m/s, obstacle field 30×20 m, work range -20…60 m:
 
 ```yaml
 world:
   bounds: {xmin: 0.0, xmax: 30.0, ymin: 0.0, ymax: 20.0}
+  work_range: {xmin: -20.0, xmax: 60.0, ymin: -20.0, ymax: 60.0}
   obstacles: 60
   speed: {min: 0.2, max: 1.2}
 ```
@@ -146,11 +148,16 @@ world:
 
 ## 🖱️ Visualization & User Waypoints
 
-- **Left-click**: set a user waypoint in the sim area. The robot retargets immediately;
-  consecutive clicks append to a queue that is executed in order.
-- **Left-drag**: rotate camera; **middle-drag**: pan; **wheel**: zoom.
-- Waypoints are clamped to the world bounds (`world.bounds`) and rendered as green spheres
-  labeled `WP0/WP1/...`; the current goal is shown as a pulsing green `GOAL`.
+- **Shift+Right-click**: set a goal/waypoint anywhere inside the **work range** (obstacles or not).
+  The robot retargets immediately; up to 3 more waypoints may be pre-placed in advance and are
+  executed in order once the current goal is reached.
+- **Left-drag**: rotate camera; **middle-drag**: pan; **right-drag / wheel**: zoom.
+- The camera starts framed on the whole grid, so the working area is fully visible at launch.
+- Waypoints may be placed anywhere inside the **work range** (`world.work_range`, default
+  `[-20,60] x [-20,60]`), which is larger than the obstacle field (`world.bounds`); obstacles
+  stay inside the field. Waypoints are rendered as green spheres labeled `WP0/WP1/...`; the
+  current goal is shown as a pulsing green `GOAL`. Up to 3 waypoints can be queued in advance.
+- If the robot collides, it stops safely; a new Shift+right-click retargets it and resumes motion.
 - The HUD shows: sim time, speed, perception rate, plan latency, replan count,
   perception age, end-to-end latency, window length, and status
   (FOLLOWING / PLANNING / COLLISION / GOAL).

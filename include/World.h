@@ -24,10 +24,14 @@ struct Cylinder
 struct WorldConfig
 {
     int num_cylinders = 30;   // number of dynamic obstacles (cylinders)
-    double xmin = 0.0;        // world bounds (m)
+    double xmin = 0.0;        // world bounds (m) - obstacle placement area
     double xmax = 20.0;
     double ymin = 0.0;
     double ymax = 15.0;
+    double work_xmin = -20.0; // work range (m) - allowed waypoint/detection area
+    double work_xmax = 60.0;
+    double work_ymin = -20.0;
+    double work_ymax = 60.0;
     double radius_min = 0.7;  // obstacle radius range (m)
     double radius_max = 1.0;
     double height_min = 1.0;  // obstacle height range (m)

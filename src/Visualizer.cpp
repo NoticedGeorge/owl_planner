@@ -14,9 +14,10 @@
 #include <vtkObjectFactory.h>
 
 // ---------------------------------------------------------------------------
-// Mouse waypoint style: keeps the standard trackball camera (LMB drag rotate / MMB pan /
-// wheel zoom); on LMB "click" (press-release displacement < 6 px), ray-intersect the z=0 plane
-// to get a user waypoint on the simulation ground.
+// Mouse waypoint style: keeps the standard trackball camera (LMB drag rotate /
+// MMB pan / wheel zoom); on Shift+RMB "click" (press-release displacement < 6 px),
+// ray-intersect the z=0 plane to get a user waypoint on the simulation ground.
+// Plain RMB still dollies (zooms) as usual.
 // ---------------------------------------------------------------------------
 class WaypointStyle : public vtkInteractorStyleTrackballCamera
 {
@@ -26,22 +27,26 @@ public:
 
     std::function<void(double x, double y)> on_click;
 
-    void OnLeftButtonDown() override
+    void OnRightButtonDown() override
     {
+        shift_pick_ = GetInteractor()->GetShiftKey() != 0;
         int* p = GetInteractor()->GetEventPosition();
         down_x_ = p[0];
         down_y_ = p[1];
-        Superclass::OnLeftButtonDown();
+        if (!shift_pick_)
+            Superclass::OnRightButtonDown();
     }
 
-    void OnLeftButtonUp() override
+    void OnRightButtonUp() override
     {
-        Superclass::OnLeftButtonUp();
+        if (!shift_pick_)
+            Superclass::OnRightButtonUp();
         int* p = GetInteractor()->GetEventPosition();
         int dx = p[0] - down_x_;
         int dy = p[1] - down_y_;
-        if (dx * dx + dy * dy <= 36)
+        if (shift_pick_ && dx * dx + dy * dy <= 36)
             emitPick();
+        shift_pick_ = false;
     }
 
 private:
@@ -77,6 +82,7 @@ private:
 
     int down_x_ = 0;
     int down_y_ = 0;
+    bool shift_pick_ = false;
 };
 vtkStandardNewMacro(WaypointStyle);
 
@@ -96,14 +102,10 @@ RGB lerpRGB(const RGB& a, const RGB& b, double t)
             a.b + (b.b - a.b) * t};
 }
 
-RGB pathColor(double t)
+RGB pathColor(double /*t*/)
 {
-    // green -> cyan -> purple
-    static const RGB stops[] = {{0.15, 1.0, 0.45},
-                                {0.15, 0.85, 1.0},
-                                {0.75, 0.35, 1.0}};
-    if (t < 0.5) return lerpRGB(stops[0], stops[1], t * 2.0);
-    return lerpRGB(stops[1], stops[2], (t - 0.5) * 2.0);
+    // solid azure-blue plan path (thin, distinct from the purple-cyan trail)
+    return {0.30, 0.60, 1.0};
 }
 
 RGB speedColor(double speed, double vmin, double vmax)
@@ -186,6 +188,9 @@ void Visualizer::buildScene()
     viewer_->addLine(pcl::PointXYZ(d.x(), d.y(), 0),
                      pcl::PointXYZ(a.x(), a.y(), 0), 0.35, 0.45, 0.6, "world_y1");
 
+    // Frame the whole grid + working area so the initial zoom shows everything.
+    viewer_->resetCamera();
+
     // install the mouse waypoint interaction style
     vtkSmartPointer<vtkRenderWindowInteractor> iren =
         viewer_->getRenderWindow()->GetInteractor();
@@ -195,9 +200,11 @@ void Visualizer::buildScene()
         style->on_click = [this](double x, double y)
         {
             Eigen::Vector2d p(x, y);
-            // clamp waypoints into the sim area so the planner can handle them
-            p.x() = std::max(world_cfg_.xmin, std::min(world_cfg_.xmax, p.x()));
-            p.y() = std::max(world_cfg_.ymin, std::min(world_cfg_.ymax, p.y()));
+            // clamp waypoints into the work range (start..goal rectangle),
+            // which is larger than the obstacle world, so endpoints can be
+            // placed outside the obstacle field but still reachable
+            p.x() = std::max(pick_xmin_, std::min(pick_xmax_, p.x()));
+            p.y() = std::max(pick_ymin_, std::min(pick_ymax_, p.y()));
             addPickedWaypoint(p);
         };
         iren->SetInteractorStyle(style);
@@ -214,6 +221,13 @@ void Visualizer::setText(const std::string& id, const std::string& text,
 {
     if (!viewer_->updateText(text, x, y, size, r, g, b, id))
         viewer_->addText(text, x, y, size, r, g, b, id);
+}
+
+void Visualizer::setPickRange(double xmin, double xmax,
+                               double ymin, double ymax)
+{
+    pick_xmin_ = xmin; pick_xmax_ = xmax;
+    pick_ymin_ = ymin; pick_ymax_ = ymax;
 }
 
 void Visualizer::addPickedWaypoint(const Eigen::Vector2d& p)
@@ -248,7 +262,7 @@ void Visualizer::updatePath(const std::vector<Eigen::Vector2d>& path)
     {
         viewer_->addPointCloud(path_cloud_, "path");
         viewer_->setPointCloudRenderingProperties(
-            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, "path");
+            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "path");
     }
 }
 
@@ -262,11 +276,11 @@ void Visualizer::updateTrail(const std::vector<Eigen::Vector2d>& executed)
     const double n = std::max(1, total);
     for (int i = 0; i < total; i += stride)
     {
-        // older = dimmer (magenta fade-out)
-        double alpha = std::max(0.0, 1.0 - i / n);
+        // gradient: purple (start of the walk) -> cyan (at the robot)
+        double t = double(i) / n;
         exec_cloud_->points.push_back(makePoint(
             executed[i], 0.005,
-            {0.55 * alpha, 0.15 * alpha, 0.75 * alpha}));
+            lerpRGB({0.55, 0.15, 0.75}, {0.00, 0.80, 0.85}, t)));
     }
 
     exec_cloud_->width = exec_cloud_->points.size();
@@ -277,7 +291,7 @@ void Visualizer::updateTrail(const std::vector<Eigen::Vector2d>& executed)
     {
         viewer_->addPointCloud(exec_cloud_, "exec_cloud");
         viewer_->setPointCloudRenderingProperties(
-            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "exec_cloud");
+            pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "exec_cloud");
     }
 }
 
@@ -416,7 +430,7 @@ void Visualizer::updateWaypoints(const RenderState& s)
 
         std::string label = "WP" + std::to_string(i);
         std::string lid = "wp_label_" + std::to_string(i);
-        viewer_->addText3D(label, pcl::PointXYZ(p.x(), p.y(), 0.2),
+        viewer_->addText3D(label, pcl::PointXYZ(p.x(), p.y(), 0.6),
                            0.6, 0.15, 1.0, 0.3, lid);
     }
 }
@@ -477,11 +491,11 @@ void Visualizer::updateHud(const RenderState& s)
     setText("hud_5", oss.str(), 12, 405, 16, r, g, b);
 
     setText("hud_legend",
-            "green-blue = plan path   magenta = trail   yellow = robot   red = obstacle",
+            "blue = plan path   purple-cyan = trail   yellow = robot   red = obstacle",
             12, 20, 12, 0.5, 0.55, 0.65);
 
     setText("hud_hint",
-            "LMB click = set waypoint   drag = rotate   wheel = zoom",
+            "Shift+RMB = set goal   LMB drag = rotate   RMB drag = zoom",
             12, 4, 12, 0.4, 0.75, 0.6);
 }
 

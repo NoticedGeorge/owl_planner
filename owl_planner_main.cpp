@@ -89,10 +89,24 @@ int main(int argc, char** argv)
         controller.initWithPath(initial_path);
     }
 
+    // ===== Work range (from YAML, default -20..60) =====
+    // The area where user waypoints are allowed and the pipeline's
+    // safety/bypass checks consider reachable. Obstacles themselves stay
+    // inside world.bounds.
+    const double wxmin = cfg.world.work_xmin;
+    const double wxmax = cfg.world.work_xmax;
+    const double wymin = cfg.world.work_ymin;
+    const double wymax = cfg.world.work_ymax;
+
+    pipeline.setWorkBounds(wxmin, wxmax, wymin, wymax);
+
     // ===== Visualization =====
     std::unique_ptr<Visualizer> viz;
     if (!cfg.headless)
+    {
         viz = std::make_unique<Visualizer>(cfg.world);
+        viz->setPickRange(wxmin, wxmax, wymin, wymax);
+    }
 
     pipeline.start();
     pipeline.updateRobot(robot);
@@ -230,23 +244,30 @@ int main(int argc, char** argv)
             auto picks = viz->takePickedWaypoints();
             for (const auto& p : picks)
             {
-                if (!has_user_goal)
+                if (!has_user_goal || controller.collided())
                 {
-                    // still heading to the default goal: retarget immediately
+                    // first click, or recovering from a collision: retarget immediately
+                    // (setGoal resets the collided state, so the robot moves again)
                     current_goal = p;
                     has_user_goal = true;
+                    collision = false;
                     controller.setGoal(p, robot.pos);
                     pipeline.submitRequest(controller.makeInitialRequest(robot));
                     std::cout << "[waypoint] retarget to (" << p.x() << ", "
                               << p.y() << ")" << std::endl;
                 }
-                else
+                else if (waypoint_queue.size() < 3)
                 {
-                    // a user goal is already set: append to the queue
+                    // pre-placed waypoints are allowed, but at most 3 in advance
                     waypoint_queue.push_back(p);
                     std::cout << "[waypoint] queued (" << p.x() << ", "
                               << p.y() << "), queue=" << waypoint_queue.size()
-                              << std::endl;
+                              << "/3" << std::endl;
+                }
+                else
+                {
+                    std::cout << "[waypoint] queue full (3/3) - reach the current "
+                                 "goal first" << std::endl;
                 }
             }
 
@@ -262,8 +283,8 @@ int main(int argc, char** argv)
             }
 
             // 6. render
+            // render only queued waypoints; the current goal is already shown by the GOAL marker
             display_waypoints.clear();
-            display_waypoints.push_back(current_goal);
             display_waypoints.insert(display_waypoints.end(),
                                      waypoint_queue.begin(),
                                      waypoint_queue.end());

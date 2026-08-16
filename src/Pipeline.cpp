@@ -52,6 +52,7 @@ bool pointBlocked(const Vector2d& p, const ObstacleMap& obstacles,
 std::vector<Vector2d> emergencyBypass(
     const std::vector<Vector2d>& ref,
     const ObstacleMap& obstacles,
+    double xmin, double xmax, double ymin, double ymax,
     double standoff = 1.2)
 {
     if (ref.size() < 2)
@@ -61,7 +62,7 @@ std::vector<Vector2d> emergencyBypass(
     int hit = -1;
     for (int i = 0; i < static_cast<int>(ref.size()); ++i)
     {
-        if (pointBlocked(ref[i], obstacles, 0.0, -50, 50, -50, 50))
+        if (pointBlocked(ref[i], obstacles, 0.0, xmin, xmax, ymin, ymax))
         {
             hit = i;
             break;
@@ -94,8 +95,8 @@ std::vector<Vector2d> emergencyBypass(
     Eigen::Vector2d left = block->center + normal * offset;
     Eigen::Vector2d right = block->center - normal * offset;
 
-    bool left_ok = !pointBlocked(left, obstacles, 0.3, 0, 20, 0, 15);
-    bool right_ok = !pointBlocked(right, obstacles, 0.3, 0, 20, 0, 15);
+    bool left_ok = !pointBlocked(left, obstacles, 0.3, xmin, xmax, ymin, ymax);
+    bool right_ok = !pointBlocked(right, obstacles, 0.3, xmin, xmax, ymin, ymax);
 
     if (!left_ok && !right_ok)
         return ref; // cannot bypass: keep the original path and wait for the next replan
@@ -158,6 +159,13 @@ PlanningPipeline::PlanningPipeline(World& world,
 {
     latest_perception_.stamp = Clock::now();
     latest_plan_.frame.stamp = Clock::now();
+}
+
+void PlanningPipeline::setWorkBounds(double xmin, double xmax,
+                                     double ymin, double ymax)
+{
+    work_xmin_ = xmin; work_xmax_ = xmax;
+    work_ymin_ = ymin; work_ymax_ = ymax;
 }
 
 PlanningPipeline::~PlanningPipeline()
@@ -285,7 +293,9 @@ void PlanningPipeline::plannerLoop()
         auto [safe, min_clear] = checkPlanSafety(window_path, pf.data, 0.05);
         if (!safe)
         {
-            auto bypass = emergencyBypass(req.ref_path, pf.data, 1.2);
+            auto bypass = emergencyBypass(req.ref_path, pf.data,
+                                          work_xmin_, work_xmax_,
+                                          work_ymin_, work_ymax_, 1.2);
             auto [bypass_safe, bypass_clear] =
                 checkPlanSafety(bypass, pf.data, 0.05);
 

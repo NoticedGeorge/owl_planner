@@ -31,6 +31,10 @@ public:
     void start();
     void stop();
 
+    // Set the reachable work rectangle (m) used by safety/bypass checks.
+    // Defaults to the obstacle world bounds if not called.
+    void setWorkBounds(double xmin, double xmax, double ymin, double ymax);
+
     // ---- Executor -> pipeline ----
     void updateRobot(const RobotState& robot);
     void submitRequest(PlanRequest req);
@@ -51,6 +55,8 @@ private:
     World& world_;
     double perception_hz_;
     double safe_r_;
+    double work_xmin_ = 0.0, work_xmax_ = 20.0;
+    double work_ymin_ = 0.0, work_ymax_ = 15.0;
 
     std::unique_ptr<PerceptionNode> perception_;
     std::unique_ptr<Planner> planner_;

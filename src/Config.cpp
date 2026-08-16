@@ -41,6 +41,15 @@ void readWorld(const YAML::Node& node, WorldConfig& w)
         readScalar(bounds, "ymax", w.ymax);
     }
 
+    const YAML::Node& work = node["work_range"];
+    if (work)
+    {
+        readScalar(work, "xmin", w.work_xmin);
+        readScalar(work, "xmax", w.work_xmax);
+        readScalar(work, "ymin", w.work_ymin);
+        readScalar(work, "ymax", w.work_ymax);
+    }
+
     const YAML::Node& radius = node["radius"];
     if (radius)
     {

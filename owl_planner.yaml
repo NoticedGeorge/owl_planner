@@ -13,12 +13,18 @@ simulation:
   debug: false             # print per-replan diagnostics
 
 world:
-  # World bounds (m); user waypoints are clamped to this area
+  # Obstacle field bounds (m): dynamic obstacles are placed inside this area.
+  # This is NOT the waypoint range (see work_range below).
   bounds:
     xmin: 0.0
     xmax: 20.0
     ymin: 0.0
     ymax: 15.0
+  work_range:              # waypoint/detection range (m): where mouse waypoints
+    xmin: -20.0            # are allowed and the planner treats as reachable.
+    xmax: 60.0             # Should cover (or exceed) bounds.
+    ymin: -20.0
+    ymax: 60.0
   obstacles: 30            # number of dynamic obstacles (cylinders)
   radius:                  # obstacle radius range (m)
     min: 0.7
