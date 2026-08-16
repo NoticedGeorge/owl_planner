@@ -257,8 +257,10 @@ void Visualizer::updateTrail(const std::vector<Eigen::Vector2d>& executed)
     exec_cloud_->points.clear();
     exec_cloud_->reserve(executed.size());
 
-    const double n = std::max(1, static_cast<int>(executed.size()));
-    for (int i = 0; i < static_cast<int>(executed.size()); ++i)
+    const int total = static_cast<int>(executed.size());
+    const int stride = std::max(1, total / 2000); // keep at most ~2000 rendered trail points
+    const double n = std::max(1, total);
+    for (int i = 0; i < total; i += stride)
     {
         // older = dimmer (magenta fade-out)
         double alpha = std::max(0.0, 1.0 - i / n);
@@ -306,68 +308,91 @@ void Visualizer::updateCylinders(const std::vector<Cylinder>& cylinders)
             pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "cylinders_cloud");
     }
 
-    // per-cylinder velocity arrow
-    for (int i = 0; i < static_cast<int>(cylinders.size()); ++i)
+    // per-cylinder velocity arrows: rebuilding every frame is expensive,
+    // so redraw them at ~10 Hz only
+    if (frame_ % 10 == 0)
     {
-        std::string id = "cyl_arrow_" + std::to_string(i);
-        const auto& c = cylinders[i];
-        Eigen::Vector2d end = c.center + c.velocity * 0.6;
+        for (int i = 0; i < static_cast<int>(cylinders.size()); ++i)
+        {
+            std::string id = "cyl_arrow_" + std::to_string(i);
+            const auto& c = cylinders[i];
+            Eigen::Vector2d end = c.center + c.velocity * 0.6;
 
-        viewer_->removeShape(id);
-        viewer_->addArrow(pcl::PointXYZ(c.center.x(), c.center.y(), 0.05),
-                          pcl::PointXYZ(end.x(), end.y(), 0.05),
-                          1.0, 0.65, 0.25, false, id);
+            viewer_->removeShape(id);
+            viewer_->addArrow(pcl::PointXYZ(c.center.x(), c.center.y(), 0.05),
+                              pcl::PointXYZ(end.x(), end.y(), 0.05),
+                              1.0, 0.65, 0.25, false, id);
+        }
     }
 }
 
 void Visualizer::updateRobot(const RenderState& s)
 {
-    // body
-    viewer_->removeShape("robot");
-    if (s.collision)
+    const double r = s.collision ? 0.14 : 0.13;
+    const double cr = s.collision ? 1.0 : 1.0;
+    const double cg = s.collision ? 0.15 : 0.85;
+    const double cb = s.collision ? 0.15 : 0.2;
+
+    // body: create once, then update in place (cheap)
+    if (!robot_ready_)
     {
         viewer_->addSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
-                           0.14, 1.0, 0.15, 0.15, "robot");
+                           r, cr, cg, cb, "robot");
+        viewer_->addSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
+                           0.28, 0.2, 0.9, 1.0, "robot_halo");
+        viewer_->setShapeRenderingProperties(
+            pcl::visualization::PCL_VISUALIZER_OPACITY, 0.3, "robot_halo");
+        robot_ready_ = true;
     }
     else
     {
-        viewer_->addSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
-                           0.13, 1.0, 0.85, 0.2, "robot");
+        viewer_->updateSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
+                              r, cr, cg, cb, "robot");
+        // pulse halo
+        double halo = 0.22 + 0.06 * std::sin(2.0 * M_PI * s.sim_time / 0.7);
+        viewer_->updateSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
+                              halo, 0.2, 0.9, 1.0, "robot_halo");
     }
 
-    // pulse halo
-    viewer_->removeShape("robot_halo");
-    double halo = 0.22 + 0.06 * std::sin(2.0 * M_PI * s.sim_time / 0.7);
-    if (!s.reached)
+    // heading arrow: rebuild at ~15 Hz
+    if (frame_ % 5 == 0)
     {
-        viewer_->addSphere(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0),
-                           halo, 0.2, 0.9, 1.0, "robot_halo");
-        viewer_->setShapeRenderingProperties(
-            pcl::visualization::PCL_VISUALIZER_OPACITY, 0.3, "robot_halo");
-    }
-
-    // heading arrow
-    viewer_->removeShape("robot_arrow");
-    if (s.robot.vel.norm() > 1e-3)
-    {
-        Eigen::Vector2d end = s.robot.pos + s.robot.vel.normalized() * 0.55;
-        viewer_->addArrow(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0.05),
-                          pcl::PointXYZ(end.x(), end.y(), 0.05),
-                          1.0, 1.0, 1.0, false, "robot_arrow");
+        viewer_->removeShape("robot_arrow");
+        if (s.robot.vel.norm() > 1e-3)
+        {
+            Eigen::Vector2d end = s.robot.pos + s.robot.vel.normalized() * 0.55;
+            viewer_->addArrow(pcl::PointXYZ(s.robot.pos.x(), s.robot.pos.y(), 0.05),
+                              pcl::PointXYZ(end.x(), end.y(), 0.05),
+                              1.0, 1.0, 1.0, false, "robot_arrow");
+        }
     }
 }
 
 void Visualizer::updateGoal(const RenderState& s)
 {
-    viewer_->removeShape("goal");
     double r = 0.18 + 0.05 * std::sin(2.0 * M_PI * s.sim_time / 0.9);
-    viewer_->addSphere(pcl::PointXYZ(s.goal.x(), s.goal.y(), 0),
-                       r, 0.2, 1.0, 0.45, "goal");
 
-    viewer_->removeShape("goal_label");
-    viewer_->addText3D("GOAL",
-                       pcl::PointXYZ(s.goal.x(), s.goal.y(), 0.2),
-                       0.8, 0.2, 1.0, 0.45, "goal_label");
+    if (!goal_ready_)
+    {
+        viewer_->addSphere(pcl::PointXYZ(s.goal.x(), s.goal.y(), 0),
+                           r, 0.2, 1.0, 0.45, "goal");
+        viewer_->addText3D("GOAL",
+                           pcl::PointXYZ(s.goal.x(), s.goal.y(), 0.2),
+                           0.8, 0.2, 1.0, 0.45, "goal_label");
+        goal_ready_ = true;
+    }
+    else
+    {
+        viewer_->updateSphere(pcl::PointXYZ(s.goal.x(), s.goal.y(), 0),
+                              r, 0.2, 1.0, 0.45, "goal");
+        if (frame_ % 5 == 0)
+        {
+            viewer_->removeShape("goal_label");
+            viewer_->addText3D("GOAL",
+                               pcl::PointXYZ(s.goal.x(), s.goal.y(), 0.2),
+                               0.8, 0.2, 1.0, 0.45, "goal_label");
+        }
+    }
 }
 
 void Visualizer::updateWaypoints(const RenderState& s)
@@ -460,6 +485,13 @@ void Visualizer::updateHud(const RenderState& s)
             12, 4, 12, 0.4, 0.75, 0.6);
 }
 
+// HUD text is refreshed at ~5 Hz instead of every frame to cut VTK text churn.
+void Visualizer::updateHudThrottled(const RenderState& s)
+{
+    if (frame_ % 5 == 0)
+        updateHud(s);
+}
+
 void Visualizer::render(const RenderState& state)
 {
     ++frame_;
@@ -470,8 +502,22 @@ void Visualizer::render(const RenderState& state)
 
     updateRobot(state);
     updateGoal(state);
-    updateWaypoints(state);
-    updateHud(state);
 
-    viewer_->spinOnce(1);
+    // Only rebuild waypoint markers when the list actually changes.
+    if (state.waypoints)
+    {
+        if (waypoint_dirty_ || *state.waypoints != waypoint_cache_)
+        {
+            waypoint_cache_ = *state.waypoints;
+            updateWaypoints(state);
+        }
+    }
+
+    updateHudThrottled(state);
+
+    // force_redraw = true guarantees an actual frame: PCL's spinOnce only
+    // re-renders via interactor timer events, and the default trackball
+    // style's OnTimer does not render (PCL's own style does). Without this,
+    // the scene freezes whenever the mouse is idle.
+    viewer_->spinOnce(1, true);
 }

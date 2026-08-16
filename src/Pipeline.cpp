@@ -289,12 +289,17 @@ void PlanningPipeline::plannerLoop()
             auto [bypass_safe, bypass_clear] =
                 checkPlanSafety(bypass, pf.data, 0.05);
 
+            static auto last_warn = Clock::now();
             if (bypass_safe)
             {
                 window_path = std::move(bypass);
                 safe = true;
-                std::cout << "[pipeline] emergency bypass (clearance "
-                          << bypass_clear << " m)" << std::endl;
+                if (msSince(last_warn) > 500.0)
+                {
+                    std::cout << "[pipeline] emergency bypass (clearance "
+                              << bypass_clear << " m)" << std::endl;
+                    last_warn = Clock::now();
+                }
             }
             else
             {
@@ -304,9 +309,13 @@ void PlanningPipeline::plannerLoop()
                     metrics_.plan_ms = msBetween(t0, Clock::now());
                     metrics_.perception_age_ms = perception_age;
                 }
-                std::cout << "[pipeline] plan rejected (min clearance "
-                          << min_clear << " m), keeping previous plan"
-                          << std::endl;
+                if (msSince(last_warn) > 500.0)
+                {
+                    std::cout << "[pipeline] plan rejected (min clearance "
+                              << min_clear << " m), keeping previous plan"
+                              << std::endl;
+                    last_warn = Clock::now();
+                }
                 continue;
             }
         }

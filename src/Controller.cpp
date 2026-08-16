@@ -428,6 +428,10 @@ RobotState Controller::follow(const RobotState& robot, double dt,
         out.speed = step / std::max(dt, 1e-4);
 
         executed_.push_back(out.pos);
+
+        // Keep the trail bounded: drop the oldest half once it grows too large.
+        if (executed_.size() >= 8000)
+            executed_.erase(executed_.begin(), executed_.begin() + 4000);
     }
 
     // 5. drop the traversed path prefix

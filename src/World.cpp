@@ -5,10 +5,11 @@
 
 namespace {
 
-// Generate dense interior points for a cylinder (radial fill), matching the legacy generateSingleCylinder3D parameters
+// Generate interior points for a cylinder (radial fill). Density is kept low:
+// the cloud is visualization-only, and lower density keeps the renderer fast.
 std::vector<Eigen::Vector3d> generateCylinderOffsets(
     double radius, double height,
-    int num_angle = 30, int num_height = 20, int num_radial = 10)
+    int num_angle = 12, int num_height = 6, int num_radial = 3)
 {
     std::vector<Eigen::Vector3d> offsets;
     offsets.reserve((num_height + 1) * (num_radial + 1) * num_angle);

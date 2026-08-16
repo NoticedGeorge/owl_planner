@@ -53,6 +53,7 @@ private:
     void updateGoal(const RenderState& s);
     void updateWaypoints(const RenderState& s);
     void updateHud(const RenderState& s);
+    void updateHudThrottled(const RenderState& s);
     void setText(const std::string& id, const std::string& text,
                  double x, double y, double size,
                  double r, double g, double b);
@@ -64,8 +65,12 @@ private:
 
     WorldConfig world_cfg_;
     std::uint32_t frame_ = 0;
-    bool scene_ready_ = false;
-    bool robot_arrow_ = false;
+
+    // Per-frame shape churn caches: only recreate when the data actually changes.
+    std::vector<Eigen::Vector2d> waypoint_cache_;
+    bool waypoint_dirty_ = true;
+    bool robot_ready_ = false;
+    bool goal_ready_ = false;
 
     std::mutex pick_mutex_;
     std::deque<Eigen::Vector2d> picked_;

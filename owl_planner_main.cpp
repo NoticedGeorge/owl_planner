@@ -117,74 +117,116 @@ int main(int argc, char** argv)
     double last_print = 0.0;
     double sim_time = 0.0;
     bool collision = false;
+    bool sim_done = false;
 
-    auto frame_begin = Clock::now();
+    // Decoupled pacing: the simulation advances with fixed 50 Hz steps (an
+    // accumulator keeps it real-time even if a frame takes long), while
+    // rendering happens once per outer iteration at a fixed 30 Hz. 30 Hz
+    // divides evenly into common 60/120 Hz displays, so idle frames are
+    // evenly spaced instead of fighting vsync (the source of the stutter).
+    const double render_period = 1.0 / 30.0;
+    double accumulator = 0.0;
+    auto last_tick = Clock::now();
 
-    while (true)
+    while (!sim_done)
     {
         if (viz && viz->wasStopped()) break;
-        if (cfg.headless && sim_time >= cfg.run_seconds) break;
 
-        // 1. advance the simulation
-        world.step(cfg.world_dt, robot.pos);
-        sim_time += cfg.world_dt;
+        // ---- advance the simulation with fixed 50 Hz steps ----
+        double frame_seconds = std::min(
+            std::chrono::duration<double>(Clock::now() - last_tick).count(),
+            0.1);
+        last_tick = Clock::now();
+        accumulator += frame_seconds;
 
-        pipeline.updateRobot(robot);
-
-        // 2. consume the latest plan (dedup by seq, splice once)
-        PlanFrame plan;
-        if (pipeline.latestPlan(plan) && plan.frame.seq != applied_seq)
+        while (accumulator >= cfg.world_dt && !sim_done)
         {
-            applied_seq = plan.frame.seq;
-            controller.applyPlan(plan);
+            accumulator -= cfg.world_dt;
 
-            if (cfg.debug)
+            // 1. advance the simulation
+            world.step(cfg.world_dt, robot.pos);
+            sim_time += cfg.world_dt;
+
+            pipeline.updateRobot(robot);
+
+            // 2. consume the latest plan (dedup by seq, splice once)
+            PlanFrame plan;
+            if (pipeline.latestPlan(plan) && plan.frame.seq != applied_seq)
             {
-                std::cout << "[debug] applied plan #" << plan.frame.seq
-                          << " reason=" << plan.reason
-                          << " plan_ms=" << plan.plan_ms
-                          << " pts=" << plan.frame.data.size()
-                          << " perc_age=" << plan.perception_age_ms
-                          << "ms" << std::endl;
+                applied_seq = plan.frame.seq;
+                controller.applyPlan(plan);
 
-                // check min clearance between the plan and real obstacles (<0 means clipping)
-                double min_clear = 1e9;
-                auto circles = world.circleObstacles();
-                for (const auto& p : plan.frame.data)
-                    for (const auto& g : circles)
-                        for (const auto& obs : g)
-                            min_clear = std::min(min_clear,
-                                (p - obs.center).norm() - obs.radius);
-                std::cout << "[debug]   min plan clearance: "
-                          << min_clear << " m" << std::endl;
+                if (cfg.debug)
+                {
+                    std::cout << "[debug] applied plan #" << plan.frame.seq
+                              << " reason=" << plan.reason
+                              << " plan_ms=" << plan.plan_ms
+                              << " pts=" << plan.frame.data.size()
+                              << " perc_age=" << plan.perception_age_ms
+                              << "ms" << std::endl;
+
+                    // check min clearance between the plan and real obstacles (<0 means clipping)
+                    double min_clear = 1e9;
+                    auto circles = world.circleObstacles();
+                    for (const auto& p : plan.frame.data)
+                        for (const auto& g : circles)
+                            for (const auto& obs : g)
+                                min_clear = std::min(min_clear,
+                                    (p - obs.center).norm() - obs.radius);
+                    std::cout << "[debug]   min plan clearance: "
+                              << min_clear << " m" << std::endl;
+                }
+
+                double e2e = msSince(plan.perception_stamp);
+                pipeline.reportEndToEnd(e2e);
             }
 
-            double e2e = msSince(plan.perception_stamp);
-            pipeline.reportEndToEnd(e2e);
+            // 3. real-time collision check (highest priority)
+            if (!collision && !controller.reached())
+            {
+                auto circles = world.circleObstacles();
+                for (const auto& group : circles)
+                    for (const auto& obs : group)
+                        if ((robot.pos - obs.center).norm() < obs.radius)
+                        {
+                            collision = true;
+                            controller.setCollided(true);
+                            std::cout << "[collision] robot stopped at ("
+                                      << robot.pos.x() << ", " << robot.pos.y()
+                                      << "), obstacle at (" << obs.center.x()
+                                      << ", " << obs.center.y() << ") r="
+                                      << obs.radius << std::endl;
+                            break;
+                        }
+            }
+
+            // 4. sliding-window replan decision
+            auto req = controller.update(robot, world.circleObstacles(),
+                                         pipeline.planAgeMs(),
+                                         pipeline.replanInFlight());
+            if (!req.reason.empty())
+                pipeline.submitRequest(std::move(req));
+
+            // 5. path tracking
+            robot = controller.follow(robot, cfg.world_dt, world.circleObstacles());
+
+            // 7. periodic metrics output: headless only (the GUI HUD already
+            //    shows the same numbers, and console spam delays the render loop)
+            if (cfg.headless && sim_time - last_print >= 2.0)
+            {
+                last_print = sim_time;
+                printMetrics(pipeline.metrics(), sim_time, robot.speed,
+                             collision, controller.reached());
+            }
+
+            if (cfg.headless && sim_time >= cfg.run_seconds) sim_done = true;
+            if (cfg.headless && controller.reached()) sim_done = true;
         }
 
-        // 3. real-time collision check (highest priority)
-        if (!collision && !controller.reached())
-        {
-            auto circles = world.circleObstacles();
-            for (const auto& group : circles)
-                for (const auto& obs : group)
-                    if ((robot.pos - obs.center).norm() < obs.radius)
-                    {
-                        collision = true;
-                        controller.setCollided(true);
-                        std::cout << "[collision] robot stopped at ("
-                                  << robot.pos.x() << ", " << robot.pos.y()
-                                  << "), obstacle at (" << obs.center.x()
-                                  << ", " << obs.center.y() << ") r="
-                                  << obs.radius << std::endl;
-                        break;
-                    }
-        }
-
-        // 3.5 user waypoints: LMB click in the GUI
+        // ---- user waypoints + render, once per 30 Hz tick ----
         if (viz)
         {
+            // 3.5 user waypoints: LMB click in the GUI
             auto picks = viz->takePickedWaypoints();
             for (const auto& p : picks)
             {
@@ -218,21 +260,8 @@ int main(int argc, char** argv)
                 std::cout << "[waypoint] next queued goal (" << current_goal.x()
                           << ", " << current_goal.y() << ")" << std::endl;
             }
-        }
 
-        // 4. sliding-window replan decision
-        auto req = controller.update(robot, world.circleObstacles(),
-                                     pipeline.planAgeMs(),
-                                     pipeline.replanInFlight());
-        if (!req.reason.empty())
-            pipeline.submitRequest(std::move(req));
-
-        // 5. path tracking
-        robot = controller.follow(robot, cfg.world_dt, world.circleObstacles());
-
-        // 6. render
-        if (viz)
-        {
+            // 6. render
             display_waypoints.clear();
             display_waypoints.push_back(current_goal);
             display_waypoints.insert(display_waypoints.end(),
@@ -255,22 +284,11 @@ int main(int argc, char** argv)
             viz->render(rs);
         }
 
-        // 7. periodic metrics output
-        if (sim_time - last_print >= 2.0)
-        {
-            last_print = sim_time;
-            printMetrics(pipeline.metrics(), sim_time, robot.speed,
-                         collision, controller.reached());
-        }
-
-        // 8. frame-rate control (~50 Hz)
-        auto elapsed = Clock::now() - frame_begin;
-        auto target = std::chrono::duration<double>(1.0 / 50.0);
-        if (elapsed < target)
-            std::this_thread::sleep_for(target - elapsed);
-        frame_begin = Clock::now();
-
-        if (controller.reached() && cfg.headless) break;
+        // 8. pace the outer loop at a fixed 30 Hz
+        double work = std::chrono::duration<double>(Clock::now() - last_tick).count();
+        if (work < render_period)
+            std::this_thread::sleep_for(
+                std::chrono::duration<double>(render_period - work));
     }
 
     pipeline.stop();
